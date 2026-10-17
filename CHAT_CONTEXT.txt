@@ -1,0 +1,308 @@
+AEROSPEC — FULL CONTEXT OF THE CLAUDE CODE SESSION
+===================================================
+Project folder: C:\Users\manis\AeroSpec
+Session date:   2026-10-17
+Purpose:        Full Stack Web Development capstone (must satisfy course outcomes CO1–CO6)
+Note:           Secrets (JWT secret, tokens, passwords) are deliberately NOT included in this file.
+                They live only in backend/.env (gitignored).
+
+----------------------------------------------------------------------
+0. WHERE THE PROJECT STARTED
+----------------------------------------------------------------------
+- AeroSpec was a frontend-only React + Vite + TypeScript + Tailwind v4 app
+  ("RF Spectrum & Signal Strength Telemetry Pod"), dark slate-950 + cyan/blue theme.
+- It had Home / Register / Login pages and an earlier client-side Dashboard
+  (telemetry simulated in the browser, Recharts charts, useTelemetry hook,
+  a rolling window of 60 readings).
+- The Register/Login pages were mock (no real auth).
+- Not a git repo. Nothing has been committed (per instructions: "Don't commit anything").
+
+----------------------------------------------------------------------
+1. REQUEST #1 — TURN IT INTO A 3-TIER CAPSTONE (CO1–CO6)
+----------------------------------------------------------------------
+What was asked:
+- One repo: frontend/ (existing app moved in), backend/ (Express + Socket.io),
+  .github/workflows/ci.yml, README.md, SUBMISSION.md.
+- CO1 semantic and responsive HTML/Tailwind; CO2 TypeScript, async/await, fetch;
+  CO3 React dashboard (useTelemetry, rolling 60, stat cards, line + spectrum charts,
+  abnormal styling: RSSI < -100, SNR < 10);
+- CO4 Express REST + CORS + parameterized SQL + error middleware + dotenv;
+  CO5 Socket.io 1 Hz 'telemetry' emit + persist, optional MQTT;
+  CO6 Postgres pool/initSchema, SQL seed + Node seed, CI, README, deploy-ready.
+- Must run with ZERO external services. If Postgres is down, the live feed must keep
+  working and history returns empty.
+
+What was built:
+- The existing app was moved into frontend/ (including node_modules). Removed: dist/,
+  unused App.css, and the Vite template README. The old SUMMARY.md was kept in frontend/
+  and marked "historical/superseded".
+
+BACKEND (backend/, Node >= 20, ESM, Express 5, Socket.io 4, pg, dotenv, mqtt):
+  src/config.js            reads all env through dotenv
+  src/db.js                pg.Pool (max 10). SSL is off for localhost and on otherwise
+                           (DB_SSL overrides). initSchema() runs db/schema.sql.
+                           connectWithRetry() retries every 10 s plus a watchdog.
+                           withDbFallback(), isConnectionError(), withTransaction().
+                           pool.on('error') is handled so the process never crashes.
+  src/app.js               createApp(): cors({origin: CORS_ORIGIN}), express.json, routes,
+                           notFound handler, error middleware
+  src/server.js            http server + Socket.io on the same port. Runs MQTT if
+                           MQTT_URL is set, otherwise the simulator. Graceful shutdown.
+  src/routes/health.js     GET /health (db up/down plus feed stats)
+  src/routes/sensors.js    GET/POST /api/v1/sensors, GET/PUT/DELETE /api/v1/sensors/:id,
+                           GET /api/v1/sensors/:id/history?metric=&hours=
+  src/repositories/sensorRepo.js     Postgres, with an in-memory fallback when the DB is down
+  src/repositories/telemetryRepo.js  batch insert via UNNEST arrays; time-bucketed
+                                     history (<= 360 points, AVG/MIN/MAX)
+  src/realtime/simulator.js  RF model: RSSI random walk with fades, SNR vs noise floor,
+                             10 spectrum bands, frequency = busiest band
+  src/realtime/feed.js       ingest path: 60-frame backlog → io.emit('telemetry') → persist
+  src/realtime/frames.js     validation for MQTT payloads
+  src/realtime/mqttBridge.js optional; lazy import('mqtt')
+  src/middleware/errorHandler.js   JSON {error:{status,message,details}}
+  src/httpError.js, src/metrics.js (metric whitelist: rssi, frequency, snr)
+  db/schema.sql            sensors, telemetry(id, sensor_id, metric, value, ts),
+                           index (sensor_id, metric, ts DESC), default sensor 1
+  db/seed.sql              generate_series: 24 h × 1-minute × 3 metrics for sensor 1
+  scripts/seed.js          npm run seed (same RF model, transaction, --hours N)
+  test/api.test.js, test/realtime.test.js   node:test + supertest
+  eslint.config.js, .env.example, .gitignore
+
+Socket.io events (server → client):
+  'telemetry'          one frame per second:
+                       { sensor_id, ts, source, readings:[{sensor_id, metric, value, ts} ×3],
+                         spectrum[10], active_band }
+  'telemetry:backlog'  the last ≤ 60 frames, sent on connect
+
+Key decisions (request #1):
+- One frame per second whose readings[] are exactly {sensor_id, metric, value, ts},
+  instead of 3 separate events.
+- Added a `sensors` table so CRUD has a real resource. Sensor 1 (the simulator)
+  cannot be deleted (409). DELETE removes a sensor plus its telemetry in a transaction.
+- History is downsampled into buckets (bucket_seconds is returned in the response).
+- Broadcast happens before persisting, so the DB never delays the live view.
+- No axios at that point (native fetch with a typed wrapper).
+
+FRONTEND additions (request #1):
+  src/lib/api.ts            typed fetch wrapper, ApiError, API_URL/SOCKET_URL from
+                            VITE_API_URL / VITE_SOCKET_URL
+  src/hooks/useTelemetry.ts socket.io-client, rolling window of 60 readings, alerts,
+                            connection state. Start/Stop disconnects/reconnects.
+  src/lib/telemetry.ts      thresholds, frameToReading, pushWindow, detectAlerts
+  src/types.ts              wire DTOs + view types (no `any`)
+  components/dashboard/ConnectionStatus.tsx, HistoryChart.tsx (+ existing
+  SignalChart, SpectrumChart, StatCard, AlertFeed)
+  pages/Sensors.tsx         new /sensors page doing GET/POST/PUT/DELETE
+  .env.example (+ local .env.local), vercel.json
+
+Repo-level files: README.md (architecture diagram, env tables, run steps, deployment
+placeholders for Render/Vercel/Neon), SUBMISSION.md (CO1–CO6 mapped to files, viva
+one-liners), render.yaml, .github/workflows/ci.yml (frontend: npm ci, lint, build;
+backend: Postgres 16 service, npm ci, lint, test, seed), root .gitignore.
+
+Local environment facts discovered:
+- Node v24.19.0, npm 11. PostgreSQL 17 runs as a Windows service on localhost:5432.
+- Created database `aerospec` locally. backend/.env DATABASE_URL points at it
+  (credentials are in backend/.env).
+- No Docker; no Python on PATH.
+
+Bugs found and fixed during request #1:
+- Express/pg AggregateError gave empty log messages → added describeError().
+- react-hooks lint rule "set-state-in-effect" → restructured data loading in effects.
+- Layout used overflow-hidden, so focusing a form field scrolled the page sideways
+  → changed to overflow-clip.
+
+Verified: backend tests 25/25 (with and without Postgres), seed scripts ran,
+frontend build and lint clean, browser check of the dashboard, history, sensors CRUD
+and the 409 guard.
+
+----------------------------------------------------------------------
+2. REQUEST #2 — VISUAL POLISH + MOTION ONLY (frontend)
+----------------------------------------------------------------------
+Rules: cosmetic only. No changes to data logic, API calls, sockets, routes, env vars,
+TS interfaces, or backend. Respect prefers-reduced-motion.
+
+Built (framer-motion installed, v14):
+- src/lib/motion.ts: fadeUp / stagger / pageFade variants.
+- main.tsx: <MotionConfig reducedMotion="user">.
+- index.css:
+  - @theme keyframes: drift, shimmer-text, skeleton, scanline, wave, pulse-ring
+  - .glow-card (hover lift + sweeping border glow), .glow-panel, .btn-lift,
+    .text-shimmer, .skeleton, .telemetry-grid
+  - a reduced-motion media block
+- Layout.tsx: AnimatePresence route fade (useOutlet freezes the leaving page),
+  drifting blobs.
+- Home: SignalWave.tsx (looping sine traces + pulse rings), shimmer headline,
+  staggered hero/cards.
+- Dashboard: Live dot pulse ring; AnimatedNumber count-up; StatCard red flash + shake
+  when a value becomes abnormal; grid + scanline backdrop; staggered cards/panels.
+- Charts: ChartReveal clip-path draw-in for the live chart (no per-tick re-animation);
+  history line draw-in; themed glass tooltip, crosshair, active dots, gradients
+  (chartTheme.ts).
+- History skeleton shimmer; shared EmptyState.tsx; animated alert list; Navbar
+  sliding underline + animated mobile menu; AuthCard entrance; Sensors stagger and
+  skeletons.
+- frontend/UI_POLISH.md documents everything.
+- Trade-off: framer-motion added ~47 kB gzip to the main chunk
+  (could switch to LazyMotion later).
+- Only prop change: StatCard gained optional numeric/digits props.
+
+----------------------------------------------------------------------
+3. REQUEST #3 — REAL AUTHENTICATION (sent twice, the 2nd time shorter; same scope)
+----------------------------------------------------------------------
+Rules: Postgres + bcrypt + JWT + Resend. No demo or seeded users, no bypass.
+Don't touch sensors, history, Socket.io or the simulator.
+
+Backend (installed bcrypt 6, jsonwebtoken 9, resend 6):
+- db/schema.sql: users(id SERIAL PK, name, email UNIQUE, password_hash,
+  verified BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now()).
+- src/auth/tokens.js:
+  - session JWT HS256 {userId, email}, 7d, iss=aerospec-api, aud=session
+  - verify JWT {userId}, 24h, aud=email-verify (the two are not interchangeable)
+- src/auth/mailer.js: Resend send. Without RESEND_API_KEY, or if Resend fails,
+  the full link is logged to the console instead. Never throws.
+- src/middleware/requireAuth.js: Bearer → req.auth or 401.
+- src/repositories/userRepo.js: parameterized SQL; password_hash is never returned
+  to clients.
+- src/routes/auth.js, mounted at /api/v1/auth:
+    POST /register            201 {token,user}; 400 validation; 409 duplicate; 503 DB down
+    POST /login               200 {token,user}; 401 (same message for unknown email and
+                              wrong password; dummy-hash timing equaliser)
+    GET  /me                  200 {user}; 401 missing/invalid/expired token or deleted user
+    POST /resend-verification 202 {sent,via}; 200 if already verified
+    GET  /verify?token=       302 → APP_URL/login?verified=1
+                              (failure: ?verified=0&reason=expired|invalid)
+- Emails are lower-cased; passwords must be 8+ characters and ≤ 72 bytes.
+- config.js: JWT_SECRET (if missing, a random secret is generated plus a warning),
+  RESEND_API_KEY, EMAIL_FROM, APP_URL, API_PUBLIC_URL.
+- A generated JWT_SECRET was written into the local backend/.env.
+- test/auth.test.js: 17 tests (DB-only ones skip without Postgres).
+- CI: added JWT_SECRET + APP_URL env to the backend job.
+
+Frontend (installed axios):
+- src/lib/authApi.ts: axios client, errors → ApiError.
+- src/context/authContextValue.ts (context + AuthContextValue interface),
+  src/context/AuthContext.tsx (AuthProvider), src/hooks/useAuth.ts.
+  - Hydrates from localStorage (aerospec.token, aerospec.user), then GET /me.
+    Only a 401 logs out.
+  - Re-checks /me on window focus; syncs login/logout across tabs.
+  - Exposes login, register, logout, refreshUser, resendVerification.
+- src/lib/validation.ts: client rules mirroring the server.
+- components/RequireAuth.tsx: guards /dashboard and /sensors → /login (with state.from).
+- Login.tsx / Register.tsx: real endpoints, per-field errors, server error mapping
+  (409 → email field, 401 → message), spinner submit; existing animations kept.
+  /login shows banners for ?verified=1 and ?verified=0.
+- Navbar: user chip (initials, amber dot if unverified) + Logout; logged out shows
+  Login + Get Started.
+- components/dashboard/VerifyBanner.tsx: amber "Verify your email to activate full
+  access" + Resend email.
+- main.tsx wraps the app in <AuthProvider>.
+
+UI leftovers fixed in the same pass:
+- New pages/NotFound.tsx (404 "Signal lost") for unknown routes.
+- Styled spinner for the Suspense/route loader and the session check.
+- StatCard `pending` prop: neutral grey "Waiting" badge instead of green.
+- Input error/disabled states; submit spinners.
+
+Bug found and fixed in request #3:
+- Logout went to /login instead of "/". Cause: React Router v7 runs navigation as a
+  transition while setUser(null) is urgent, so the protected page rendered signed-out
+  first and its guard redirected.
+  Fix: logout() + navigate('/') run together inside startTransition (Navbar.tsx).
+  RequireAuth also ignores pages that are animating out (useIsPresent + path check).
+
+Docs: AUTH.md (design notes and verification); README updated with auth endpoints
+and env vars.
+
+Verification (request #3):
+- backend npm test: 42/42 pass with Postgres (31 pass + 11 skipped without a DB).
+- frontend npm run build + lint: clean.
+- curl end to end: 201 / 409 / 401 / 200 / me / resend 202 / verify 302 →
+  verified:true / resend → "already verified". The password never appears in the
+  server log.
+- Browser (isolated second instance on ports 4100/5174 so the user's open tab wasn't
+  affected): guard redirects, validation, verify banner, Resend, Logout → "/",
+  ?verified=1 banner, 404 page, no console errors.
+
+Incidents / notes from request #3:
+- While I tested the Register form at localhost:5173, Chrome autofilled the user's
+  real name and email. Testing in that tab was stopped and nothing was submitted from it.
+- One throwaway test JWT was printed to tool output during a curl run; its account
+  was deleted, so the token is useless.
+- All QA test accounts (@test.aerospec.dev) were deleted.
+- The user registered their own account (id 7, manishseshasai@gmail.com, unverified).
+  It was created through the temporary 4100 instance, which is now stopped, so that
+  verification link is dead. To verify: sign in, click "Resend email" on the
+  Dashboard, and copy the new link from the backend console (port 4000).
+
+----------------------------------------------------------------------
+4. HOW TO RUN
+----------------------------------------------------------------------
+Terminal 1 (backend, http://localhost:4000):
+  cd backend
+  cp .env.example .env        (already exists locally; set DATABASE_URL / JWT_SECRET)
+  npm install
+  npm run seed                (tables + 24 h history; optional)
+  npm run dev
+
+Terminal 2 (frontend, http://localhost:5173):
+  cd frontend
+  cp .env.example .env.local  (already exists locally)
+  npm install
+  npm run dev
+
+Then register an account at /register (there are no demo accounts). Without
+RESEND_API_KEY, the verification link is printed in the backend console.
+
+Pure-SQL seed alternative:
+  psql "<DATABASE_URL>" -f backend/db/schema.sql -f backend/db/seed.sql
+
+Checks:
+  cd backend && npm run lint && npm test
+  cd frontend && npm run build && npm run lint
+
+----------------------------------------------------------------------
+5. ENVIRONMENT VARIABLES
+----------------------------------------------------------------------
+backend/.env:
+  PORT=4000, NODE_ENV, CORS_ORIGIN=http://localhost:5173, DATABASE_URL, DB_SSL (optional),
+  SIM_SENSOR_ID=1, SIM_INTERVAL_MS=1000, MQTT_URL (empty = simulator), MQTT_TOPIC,
+  MQTT_USERNAME/MQTT_PASSWORD, JWT_SECRET, RESEND_API_KEY, EMAIL_FROM, APP_URL,
+  API_PUBLIC_URL (optional)
+frontend/.env.local:
+  VITE_API_URL=http://localhost:4000, VITE_SOCKET_URL=http://localhost:4000
+
+----------------------------------------------------------------------
+6. FULL REST SURFACE
+----------------------------------------------------------------------
+GET    /health
+GET    /api/v1/sensors                 POST /api/v1/sensors
+GET    /api/v1/sensors/:id             PUT  /api/v1/sensors/:id    DELETE /api/v1/sensors/:id
+GET    /api/v1/sensors/:id/history?metric=rssi|snr|frequency&hours=(0,168]
+POST   /api/v1/auth/register           POST /api/v1/auth/login
+GET    /api/v1/auth/me                 POST /api/v1/auth/resend-verification
+GET    /api/v1/auth/verify?token=
+
+----------------------------------------------------------------------
+7. DOCS IN THE REPO
+----------------------------------------------------------------------
+README.md          architecture, env, run steps, API tables, deployment placeholders
+SUBMISSION.md      CO1–CO6 mapping, viva one-liners, decisions, verification
+AUTH.md            authentication design, decisions, UI fixes, verification
+frontend/UI_POLISH.md   motion/visual design notes
+frontend/SUMMARY.md     historical (pre-backend) dashboard notes
+CHAT_CONTEXT.txt   this file
+
+----------------------------------------------------------------------
+8. STATE AT THE END OF THE SESSION / OPEN ITEMS
+----------------------------------------------------------------------
+- Running (left on because the user's browser tab uses them): backend dev server
+  on :4000 and Vite on :5173. All other processes I started were stopped.
+- Not deployed. Render/Vercel/Neon URLs in README are placeholders (TBD).
+- Not committed (not a git repo yet).
+- Not implemented (suggested before a real deployment): login rate limiting/lockout,
+  password reset, refresh tokens, and protecting the sensors API itself (it stays
+  public by instruction; only the pages are guarded).
+- Optional optimisation: framer-motion LazyMotion to shrink the main bundle.
+- SUBMISSION.md's CO tables were written before auth. AUTH.md and README cover the
+  auth work; SUBMISSION.md could get an auth row if the grader wants it.

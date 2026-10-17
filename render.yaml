@@ -1,0 +1,20 @@
+# Render Blueprint for the AeroSpec API (Express + Socket.io).
+# New → Blueprint → pick this repo. Set DATABASE_URL (e.g. Neon) and CORS_ORIGIN (your Vercel URL) in the dashboard.
+services:
+  - type: web
+    name: aerospec-api
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: SIM_SENSOR_ID
+        value: "1"

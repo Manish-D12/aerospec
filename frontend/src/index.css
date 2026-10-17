@@ -1,0 +1,176 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ *
+ * Motion tokens (Tailwind v4 theme → usable as animate-* utilities)
+ * ------------------------------------------------------------------ */
+@theme {
+  --animate-drift-a: drift-a 22s ease-in-out infinite;
+  --animate-drift-b: drift-b 28s ease-in-out infinite;
+  --animate-shimmer-text: shimmer-text 6s linear infinite;
+  --animate-skeleton: skeleton 1.6s ease-in-out infinite;
+  --animate-scanline: scanline 7s linear infinite;
+  --animate-wave: wave 6s linear infinite;
+  --animate-wave-slow: wave 11s linear infinite;
+  --animate-pulse-ring: pulse-ring 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+
+  @keyframes drift-a {
+    0%, 100% { translate: 0 0; }
+    33% { translate: 60px 40px; }
+    66% { translate: -30px 80px; }
+  }
+  @keyframes drift-b {
+    0%, 100% { translate: 0 0; }
+    50% { translate: -70px -50px; }
+  }
+  @keyframes shimmer-text {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+  }
+  @keyframes skeleton {
+    0% { background-position: 150% 0; }
+    100% { background-position: -50% 0; }
+  }
+  @keyframes scanline {
+    0% { translate: 0 -10%; }
+    100% { translate: 0 1100%; }
+  }
+  @keyframes wave {
+    from { translate: 0 0; }
+    to { translate: -50% 0; }
+  }
+  @keyframes pulse-ring {
+    0% { scale: 1; opacity: 0.7; }
+    80%, 100% { scale: 2.6; opacity: 0; }
+  }
+}
+
+@keyframes border-sweep {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 300% 50%; }
+}
+
+/* ------------------------------------------------------------------ *
+ * Reusable surfaces. These use the `translate` / `scale` properties
+ * (not `transform`) so they compose with framer-motion's transforms.
+ * ------------------------------------------------------------------ */
+@layer components {
+  /* Glass card with lift + glow on hover and a sweeping 1px border highlight. */
+  .glow-card {
+    position: relative;
+    isolation: isolate;
+    transition:
+      translate 250ms ease,
+      box-shadow 250ms ease,
+      border-color 250ms ease;
+  }
+  .glow-card::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(110deg, transparent 30%, rgb(34 211 238 / 0.75) 50%, transparent 70%);
+    background-size: 300% 100%;
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box exclude,
+      linear-gradient(#000 0 0);
+    opacity: 0;
+    transition: opacity 300ms ease;
+    animation: border-sweep 3.5s linear infinite paused;
+    pointer-events: none;
+  }
+  .glow-card:hover {
+    translate: 0 -3px;
+    box-shadow:
+      0 18px 40px -18px rgb(6 182 212 / 0.45),
+      0 0 0 1px rgb(34 211 238 / 0.08);
+  }
+  .glow-card:hover::before {
+    opacity: 1;
+    animation-play-state: running;
+  }
+
+  /* Static panels (charts, forms): glow without the lift, so charts don't jump. */
+  .glow-panel {
+    transition:
+      box-shadow 300ms ease,
+      border-color 300ms ease;
+  }
+  .glow-panel:hover {
+    border-color: rgb(34 211 238 / 0.25);
+    box-shadow: 0 0 0 1px rgb(34 211 238 / 0.06), 0 20px 50px -30px rgb(6 182 212 / 0.4);
+  }
+
+  /* Button lift: slight scale + raise + cyan glow. */
+  .btn-lift {
+    transition:
+      translate 200ms ease,
+      scale 200ms ease,
+      box-shadow 200ms ease,
+      background-color 200ms ease,
+      border-color 200ms ease,
+      color 200ms ease;
+  }
+  .btn-lift:hover:not(:disabled) {
+    translate: 0 -1px;
+    scale: 1.03;
+    box-shadow: 0 10px 24px -10px rgb(34 211 238 / 0.6);
+  }
+  .btn-lift:active:not(:disabled) {
+    translate: 0 0;
+    scale: 0.98;
+  }
+
+  /* Animated gradient text (hero headline). */
+  .text-shimmer {
+    background-image: linear-gradient(90deg, #22d3ee 0%, #3b82f6 25%, #67e8f9 50%, #3b82f6 75%, #22d3ee 100%);
+    background-size: 200% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+
+  /* Skeleton block with a moving highlight. */
+  .skeleton {
+    background-color: rgb(30 41 59 / 0.6);
+    background-image: linear-gradient(90deg, transparent 0%, rgb(148 163 184 / 0.12) 50%, transparent 100%);
+    background-size: 200% 100%;
+    background-repeat: no-repeat;
+  }
+
+  /* Faint telemetry grid behind the dashboard, fading out toward the bottom. */
+  .telemetry-grid {
+    background-image:
+      linear-gradient(rgb(34 211 238 / 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(34 211 238 / 0.05) 1px, transparent 1px);
+    background-size: 40px 40px;
+    mask-image: linear-gradient(to bottom, #000 0%, #000 40%, transparent 95%);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Reduced motion: stop loops, sweeps and lifts. framer-motion is
+ * handled separately by <MotionConfig reducedMotion="user">.
+ * ------------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .glow-card:hover,
+  .btn-lift:hover:not(:disabled) {
+    translate: none;
+    scale: none;
+  }
+  .motion-loop {
+    display: none;
+  }
+}
